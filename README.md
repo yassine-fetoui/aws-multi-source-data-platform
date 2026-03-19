@@ -302,12 +302,11 @@ On merge to `main`, the pipeline runs `terraform apply` against the dev environm
 
 ## 👤 Author
 
-**Yassine Fetoui** — Senior Data Engineer, Paris, France
+**Yassine Fetoui** —  Data Engineer
 
-- 🔗 [LinkedIn](https://linkedin.com/in/yassine-fetoui)
+- 🔗 [LinkedIn]([https://linkedin.com/in/yassine-fetoui](https://www.linkedin.com/in/yassine-fetoui-a84549384/))
 - 🐙 [GitHub](https://github.com/yassine-fetoui)
 - 📧 yfetoui123@gmail.com
-- 📄 Research: ESANN 2026 — Multi-Modal Efficient Transformer for Atrial Fibrillation Detection
 
 ---
 
