@@ -28,8 +28,8 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 > Every single AWS resource is provisioned with **Terraform**. Nothing was clicked in the console.
 
 ---
-
 ## 🏗️ Architecture
+![Alternative text describing](architecture.png)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
