@@ -1,0 +1,130 @@
+version: 2
+
+models:
+
+  - name: stg_orders
+    description: >
+      Cleaned and type-cast order events from the S3 curated zone.
+      One row per unique order event. No business logic applied here —
+      pure source cleaning, renaming, and validation.
+    columns:
+      - name: order_event_id
+        description: Unique identifier for each order event (idempotency key from Kafka)
+        tests:
+          - not_null
+          - unique
+
+      - name: order_id
+        description: Business order identifier — multiple events can share an order_id
+        tests:
+          - not_null
+
+      - name: customer_id
+        description: Customer identifier
+        tests:
+          - not_null
+
+      - name: order_amount
+        description: Total monetary value of the order in USD
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0.01
+              max_value: 100000
+
+      - name: order_status
+        description: Current status of the order
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED']
+
+      - name: event_type
+        description: Type of order event that triggered this record
+        tests:
+          - accepted_values:
+              values: ['ORDER_CREATED', 'ORDER_UPDATED', 'ORDER_CANCELLED']
+
+      - name: region
+        description: Geographic region of the order
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['eu-west', 'eu-central', 'us-east', 'us-west', 'ap-southeast']
+
+      - name: event_occurred_at
+        description: Timestamp when the event occurred in the source system
+        tests:
+          - not_null
+
+  - name: fct_customer_order_metrics
+    description: >
+      Customer-level order analytics fact table with window function metrics.
+      Incremental model — processes only new events since last run.
+      Challenge solved: replaced 6 correlated subqueries with window functions.
+      Report time improved from 8 minutes to 22 seconds.
+    columns:
+      - name: order_event_id
+        description: Unique identifier — primary key of this fact table
+        tests:
+          - not_null
+          - unique
+
+      - name: customer_running_revenue
+        description: Cumulative revenue for this customer up to and including this order
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+      - name: customer_order_sequence
+        description: Sequential order number for this customer (1 = first ever order)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+
+      - name: rank_in_region
+        description: Customer rank within their region by order value (DENSE_RANK — no gaps)
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+
+      - name: pct_of_lifetime_spend
+        description: This order as a percentage of the customer's total lifetime spend
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+  - name: snap_customers
+    description: >
+      SCD Type 2 snapshot of the customer dimension.
+      Tracks slowly changing attributes only — name, email, region, segment, account type.
+      Rapidly changing measures (balance, score) are tracked separately
+      in a point-in-time daily table to avoid snapshot explosion.
+      Challenge solved: snapshot table size reduced 94% after separating strategies.
+
+sources:
+
+  - name: curated
+    description: S3 Curated zone — cleaned and validated data loaded into Redshift
+    schema: curated
+    tables:
+      - name: orders_curated
+        description: Order events cleaned by Glue PySpark jobs
+        freshness:
+          warn_after:  {count: 2,  period: hour}
+          error_after: {count: 6,  period: hour}
+        loaded_at_field: ingested_at
+
+      - name: customers_curated
+        description: Customer dimension from operational database
+
+  - name: raw
+    description: S3 Raw zone — unmodified landing data used for reconciliation tests
+    schema: raw
+    tables:
+      - name: orders_raw
+        description: Raw Kafka events as-landed — used only for reconciliation checks

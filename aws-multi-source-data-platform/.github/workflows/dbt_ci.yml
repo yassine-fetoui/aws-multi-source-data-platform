@@ -1,0 +1,212 @@
+name: dbt CI — Test & Deploy
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'dbt/**'
+  push:
+    branches: [main]
+    paths:
+      - 'dbt/**'
+
+env:
+  DBT_PROFILES_DIR: ./dbt
+  PYTHON_VERSION:   "3.11"
+
+jobs:
+  # ── PR: Compile + Test ───────────────────────────────────────────────────────
+  dbt-ci:
+    name: dbt Compile & Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dbt
+        run: |
+          pip install dbt-redshift==1.7.0
+          dbt --version
+
+      - name: Configure dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << EOF
+          aws_data_platform:
+            target: ci
+            outputs:
+              ci:
+                type: redshift
+                host: ${{ secrets.REDSHIFT_HOST }}
+                user: ${{ secrets.REDSHIFT_USER }}
+                password: ${{ secrets.REDSHIFT_PASSWORD }}
+                port: 5439
+                dbname: ${{ secrets.REDSHIFT_DB }}
+                schema: ci_${{ github.run_id }}    # isolated schema per run
+                threads: 4
+                connect_timeout: 30
+          EOF
+
+      - name: dbt deps (install packages)
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt compile (validate SQL syntax)
+        working-directory: dbt
+        run: dbt compile --profiles-dir ~/.dbt --profile aws_data_platform
+
+      - name: dbt run — staging models only
+        working-directory: dbt
+        run: |
+          dbt run \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --select staging \
+            --target ci
+
+      - name: dbt test — staging
+        working-directory: dbt
+        run: |
+          dbt test \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --select staging \
+            --target ci
+
+      - name: dbt run — marts
+        working-directory: dbt
+        run: |
+          dbt run \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --select marts \
+            --target ci
+
+      - name: dbt test — all (including business logic tests)
+        working-directory: dbt
+        run: |
+          dbt test \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --target ci
+
+      - name: dbt source freshness check
+        working-directory: dbt
+        run: |
+          dbt source freshness \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --target ci
+        continue-on-error: true   # warn but do not block on freshness
+
+      - name: Post test results as PR comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const status = '${{ job.status }}' === 'success' ? '✅' : '❌';
+            const body = `## dbt CI Results ${status}\n\n` +
+              `**Run:** \`${{ github.run_id }}\`\n` +
+              `**Branch:** \`${{ github.head_ref }}\`\n` +
+              `**Status:** ${{ job.status }}\n\n` +
+              (status === '❌' ? '> ⚠️ **This PR is blocked — fix failing dbt tests before merging.**' : '> All dbt tests passed. Safe to merge.');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Cleanup CI schema
+        if: always()
+        working-directory: dbt
+        run: |
+          dbt run-operation drop_schema \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --args "{'schema_name': 'ci_${{ github.run_id }}'}" \
+            --target ci
+        continue-on-error: true
+
+  # ── Merge to main: Deploy to Dev ────────────────────────────────────────────
+  dbt-deploy-dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dbt
+        run: pip install dbt-redshift==1.7.0
+
+      - name: Configure dbt profile (dev)
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << EOF
+          aws_data_platform:
+            target: dev
+            outputs:
+              dev:
+                type: redshift
+                host: ${{ secrets.REDSHIFT_HOST_DEV }}
+                user: ${{ secrets.REDSHIFT_USER }}
+                password: ${{ secrets.REDSHIFT_PASSWORD }}
+                port: 5439
+                dbname: dataplatform_dev
+                schema: dbt_prod
+                threads: 8
+          EOF
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt run — full deployment
+        working-directory: dbt
+        run: |
+          dbt run \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --target dev \
+            --full-refresh false
+
+      - name: dbt snapshot — SCD Type 2
+        working-directory: dbt
+        run: |
+          dbt snapshot \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --target dev
+
+      - name: dbt test — full suite
+        working-directory: dbt
+        run: |
+          dbt test \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --target dev
+
+      - name: Generate dbt docs
+        working-directory: dbt
+        run: |
+          dbt docs generate \
+            --profiles-dir ~/.dbt \
+            --profile aws_data_platform \
+            --target dev

@@ -1,0 +1,166 @@
+name: Terraform CI — Plan & Apply
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+
+env:
+  TF_VERSION:  "1.7.0"
+  AWS_REGION:  "eu-west-1"
+  WORKING_DIR: "./terraform"
+
+jobs:
+  # ── PR: Format + Validate + Plan ─────────────────────────────────────────────
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    permissions:
+      contents:      read
+      pull-requests: write
+      id-token:      write    # for OIDC auth to AWS — no static keys
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — no hardcoded keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform fmt -check -recursive
+        id: fmt
+
+      - name: Terraform Init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Validate
+        working-directory: ${{ env.WORKING_DIR }}
+        run: terraform validate
+        id: validate
+
+      - name: Checkov Security Scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory:        ${{ env.WORKING_DIR }}
+          framework:        terraform
+          soft_fail:        false
+          output_format:    github_failed_only
+          skip_check:       CKV_AWS_144   # cross-region replication not required in dev
+
+      - name: Terraform Plan
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var-file="environments/dev.tfvars" \
+            -var="redshift_password=${{ secrets.REDSHIFT_PASSWORD }}" \
+            -var="rds_password=${{ secrets.RDS_PASSWORD }}" \
+            -out=tfplan \
+            -no-color 2>&1 | tee plan_output.txt
+        id: plan
+
+      - name: Post Plan as PR comment
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/plan_output.txt', 'utf8');
+            const maxLen = 65000;
+            const truncated = plan.length > maxLen
+              ? plan.substring(0, maxLen) + '\n\n... [truncated]'
+              : plan;
+
+            const fmt_status    = '${{ steps.fmt.outcome }}';
+            const validate_status = '${{ steps.validate.outcome }}';
+            const plan_status   = '${{ steps.plan.outcome }}';
+
+            const statusIcon = (s) => s === 'success' ? '✅' : '❌';
+
+            const body = `## Terraform Plan Results
+            | Step | Status |
+            |------|--------|
+            | Format | ${statusIcon(fmt_status)} \`${fmt_status}\` |
+            | Validate | ${statusIcon(validate_status)} \`${validate_status}\` |
+            | Plan | ${statusIcon(plan_status)} \`${plan_status}\` |
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${truncated}
+            \`\`\`
+
+            </details>
+
+            > ⚠️ **Review any \`destroy\` or \`replace\` actions carefully before merging.**`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+  # ── Merge to main: Apply to Dev ──────────────────────────────────────────────
+  terraform-apply:
+    name: Terraform Apply (Dev)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: dev
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          terraform apply \
+            -var-file="environments/dev.tfvars" \
+            -var="redshift_password=${{ secrets.REDSHIFT_PASSWORD }}" \
+            -var="rds_password=${{ secrets.RDS_PASSWORD }}" \
+            -auto-approve
