@@ -34,21 +34,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class OrderEvent:
-    """Order event model - immutable for thread safety and clarity"""
-    event_id: str
-    order_id: str
-    customer_id: str
-    product_id: str
-    quantity: int
-    unit_price: float
-    total_amount: float
-    status: str
-    region: str
-    event_type: str          # ORDER_CREATED | ORDER_UPDATED | ORDER_CANCELLED
-    event_timestamp: str
-
 
 # Avro Schema (kept close to the model for maintainability)
 ORDER_AVRO_SCHEMA = """
