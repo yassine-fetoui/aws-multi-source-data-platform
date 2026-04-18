@@ -1,16 +1,20 @@
 """
-Kafka Event Producer — AWS Multi-Source Data Platform
-Simulates real-time events from upstream source systems.
-Implements idempotent production with Avro serialisation.
+Kafka Event Producer — Banking Data Platform
+Simulates real-time order events from upstream systems (e.g., e-commerce, core banking).
+Features:
+  - Avro serialization with Schema Registry (schema evolution safety)
+  - Idempotent producer with exactly-once semantics per partition
+  - Customer-based partitioning (preserves per-customer event order)
+  - Robust error handling, monitoring, and graceful shutdown
+  - Configurable rate limiting and duration
 """
 
-import json
 import time
 import logging
 import random
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
-from typing import Generator
+from typing import Optional
 
 from confluent_kafka import Producer
 from confluent_kafka.schema_registry import SchemaRegistryClient
@@ -19,30 +23,40 @@ from confluent_kafka.serialization import SerializationContext, MessageField
 
 from config import KafkaConfig, SchemaRegistryConfig
 
-logging.basicConfig(level=logging.INFO)
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class OrderEvent:
-    event_id:       str
-    order_id:       str
-    customer_id:    str
-    product_id:     str
-    quantity:       int
-    unit_price:     float
-    total_amount:   float
-    status:         str
-    region:         str
-    event_type:     str   # ORDER_CREATED | ORDER_UPDATED | ORDER_CANCELLED
+    """Order event model - immutable for thread safety and clarity"""
+    event_id: str
+    order_id: str
+    customer_id: str
+    product_id: str
+    quantity: int
+    unit_price: float
+    total_amount: float
+    status: str
+    region: str
+    event_type: str          # ORDER_CREATED | ORDER_UPDATED | ORDER_CANCELLED
     event_timestamp: str
 
 
-ORDER_SCHEMA = """
+# Avro Schema (kept close to the model for maintainability)
+ORDER_AVRO_SCHEMA = """
 {
   "type": "record",
   "name": "OrderEvent",
-  "namespace": "com.dataplatform.orders",
+  "namespace": "com.bank.dataplatform.orders",
+  "doc": "Real-time order event for banking data lake ingestion",
   "fields": [
     {"name": "event_id",        "type": "string"},
     {"name": "order_id",        "type": "string"},
@@ -57,129 +71,147 @@ ORDER_SCHEMA = """
     {"name": "event_timestamp", "type": "string"}
   ]
 }
-"""
 
 
 class OrderEventProducer:
     """
-    Idempotent Kafka producer for order events.
-    Uses Avro serialisation with Schema Registry for schema evolution safety.
-    enable.idempotence=true guarantees exactly-once delivery per partition.
+    High-performance, idempotent Kafka producer for order events.
+    Designed for banking workloads with strong consistency and observability.
     """
 
-    REGIONS   = ["eu-west", "eu-central", "us-east", "us-west", "ap-southeast"]
-    STATUSES  = ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED"]
+    REGIONS = ["eu-west-1", "eu-central-1", "us-east-1", "us-west-2", "ap-southeast-1"]
+    STATUSES = ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"]
     EVENT_TYPES = ["ORDER_CREATED", "ORDER_UPDATED", "ORDER_CANCELLED"]
 
     def __init__(self, config: KafkaConfig, schema_config: SchemaRegistryConfig):
         self.topic = config.topic
 
-        # Schema Registry for Avro serialisation
+        # Schema Registry + Avro Serializer
         schema_registry_client = SchemaRegistryClient({"url": schema_config.url})
         self.avro_serializer = AvroSerializer(
             schema_registry_client,
-            ORDER_SCHEMA,
+            ORDER_AVRO_SCHEMA,
             lambda obj, ctx: asdict(obj)
         )
 
-        # Idempotent producer — exactly-once per partition
-        self.producer = Producer({
-            "bootstrap.servers":        config.bootstrap_servers,
-            "security.protocol":        "SASL_SSL",
-            "sasl.mechanisms":          "AWS_MSK_IAM",
-            "enable.idempotence":       True,       # exactly-once semantics
-            "acks":                     "all",       # wait for all replicas
+        # Idempotent Producer Configuration (Exactly-once semantics)
+        producer_config = {
+            "bootstrap.servers": config.bootstrap_servers,
+            "security.protocol": "SASL_SSL",
+            "sasl.mechanisms": "AWS_MSK_IAM",
+            "enable.idempotence": True,               # Critical for banking
+            "acks": "all",                            # Strong durability
             "max.in.flight.requests.per.connection": 5,
-            "retries":                  10,
-            "retry.backoff.ms":         500,
-            "compression.type":         "snappy",
-            "batch.size":               65536,       # 64KB batches
-            "linger.ms":                10,          # wait 10ms to fill batch
-        })
+            "retries": 10,
+            "retry.backoff.ms": 500,
+            "compression.type": "snappy",
+            "batch.size": 65536,                      # 64 KB
+            "linger.ms": 10,                          # Small batch delay
+            "delivery.timeout.ms": 30000,             # 30s total delivery window
+            "socket.timeout.ms": 10000,
+        }
 
-        self._delivery_count = 0
-        self._error_count    = 0
+        self.producer = Producer(producer_config)
+
+        # Monitoring counters
+        self._delivered = 0
+        self._errors = 0
 
     def _delivery_callback(self, err, msg):
-        if err:
-            logger.error("Delivery failed | topic=%s partition=%d error=%s",
+        """Callback executed when broker acknowledges (or fails) the message"""
+        if err is not None:
+            logger.error("Delivery failed | topic=%s | partition=%s | error=%s",
                          msg.topic(), msg.partition(), err)
-            self._error_count += 1
+            self._errors += 1
         else:
-            self._delivery_count += 1
-            if self._delivery_count % 1000 == 0:
-                logger.info("Delivered %d messages | errors=%d",
-                            self._delivery_count, self._error_count)
+            self._delivered += 1
+            if self._delivered % 1000 == 0:
+                logger.info("Delivered %d messages | errors=%d | throughput=%.1f msg/s",
+                            self._delivered, self._errors,
+                            self._delivered / (time.time() - self._start_time))
 
     def _generate_event(self) -> OrderEvent:
-        order_id    = f"ORD-{random.randint(100000, 999999)}"
-        customer_id = f"CUST-{random.randint(1000, 9999)}"
-        unit_price  = round(random.uniform(5.0, 500.0), 2)
-        quantity    = random.randint(1, 20)
+        """Generate realistic synthetic order event"""
+        order_id = f"ORD-{random.randint(100_000, 999_999)}"
+        customer_id = f"CUST-{random.randint(10_000, 99_999)}"
+        product_id = f"PROD-{random.randint(1_000, 9_999)}"
+
+        unit_price = round(random.uniform(9.99, 999.99), 2)
+        quantity = random.randint(1, 25)
 
         return OrderEvent(
-            event_id        = f"EVT-{int(time.time_ns())}",
-            order_id        = order_id,
-            customer_id     = customer_id,
-            product_id      = f"PROD-{random.randint(100, 999)}",
-            quantity        = quantity,
-            unit_price      = unit_price,
-            total_amount    = round(unit_price * quantity, 2),
-            status          = random.choice(self.STATUSES),
-            region          = random.choice(self.REGIONS),
-            event_type      = random.choice(self.EVENT_TYPES),
-            event_timestamp = datetime.now(timezone.utc).isoformat(),
+            event_id=f"EVT-{int(time.time_ns() / 1000)}",   # microsecond precision
+            order_id=order_id,
+            customer_id=customer_id,
+            product_id=product_id,
+            quantity=quantity,
+            unit_price=unit_price,
+            total_amount=round(unit_price * quantity, 2),
+            status=random.choice(self.STATUSES),
+            region=random.choice(self.REGIONS),
+            event_type=random.choice(self.EVENT_TYPES),
+            event_timestamp=datetime.now(timezone.utc).isoformat()
         )
 
-    def produce(self, events_per_second: int = 100, duration_seconds: int = None):
+    def produce(self,
+                events_per_second: int = 100,
+                duration_seconds: Optional[int] = None):
         """
-        Produce events continuously at the specified rate.
-        Uses customer_id as the partition key to ensure all events
-        for the same customer land on the same partition — preserving order.
+        Produce events at controlled rate with graceful shutdown.
+        Uses customer_id as key → guarantees per-customer ordering.
         """
-        logger.info("Starting producer | rate=%d events/sec | topic=%s",
+        logger.info("Starting OrderEventProducer | rate=%d events/sec | topic=%s",
                     events_per_second, self.topic)
 
-        start_time    = time.time()
-        interval      = 1.0 / events_per_second
-        events_sent   = 0
+        self._start_time = time.time()
+        interval = 1.0 / events_per_second
+        events_sent = 0
 
         try:
             while True:
                 event = self._generate_event()
 
                 self.producer.produce(
-                    topic     = self.topic,
-                    key       = event.customer_id,    # partition by customer
-                    value     = self.avro_serializer(
+                    topic=self.topic,
+                    key=event.customer_id.encode("utf-8"),   # Partition by customer
+                    value=self.avro_serializer(
                         event,
                         SerializationContext(self.topic, MessageField.VALUE)
                     ),
-                    on_delivery = self._delivery_callback,
+                    on_delivery=self._delivery_callback,
                 )
 
                 events_sent += 1
-                self.producer.poll(0)    # non-blocking poll for callbacks
+                self.producer.poll(0)   # Trigger callbacks
 
-                # Rate control
+                # Precise rate control
                 time.sleep(interval)
 
-                if duration_seconds and (time.time() - start_time) >= duration_seconds:
+                if duration_seconds and (time.time() - self._start_time) >= duration_seconds:
                     break
 
         except KeyboardInterrupt:
-            logger.info("Producer interrupted by user")
+            logger.info("Producer stopped by user (Ctrl+C)")
+        except Exception as e:
+            logger.exception("Unexpected error in producer: %s", e)
         finally:
-            self.producer.flush(timeout=30)
-            logger.info("Producer finished | sent=%d errors=%d",
-                        events_sent, self._error_count)
+            logger.info("Flushing remaining messages...")
+            self.producer.flush(timeout=60)
+            duration = time.time() - self._start_time
+            throughput = events_sent / duration if duration > 0 else 0
+
+            logger.info("Producer shutdown complete | "
+                        "sent=%d | errors=%d | duration=%.1fs | throughput=%.1f msg/s",
+                        events_sent, self._errors, duration, throughput)
 
 
 if __name__ == "__main__":
     from config import KafkaConfig, SchemaRegistryConfig
 
     producer = OrderEventProducer(
-        config        = KafkaConfig(),
-        schema_config = SchemaRegistryConfig(),
+        config=KafkaConfig(),
+        schema_config=SchemaRegistryConfig()
     )
+
+    # Run at 500 events/sec indefinitely (or Ctrl+C to stop)
     producer.produce(events_per_second=500)
