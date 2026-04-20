@@ -58,25 +58,7 @@ class S3SinkConsumer:
         - Proper resource cleanup on shutdown
     """
 
-    # Parquet schema with Kafka metadata enrichment
-    PARQUET_SCHEMA = pa.schema([
-        pa.field("event_id", pa.string()),
-        pa.field("order_id", pa.string()),
-        pa.field("customer_id", pa.string()),
-        pa.field("product_id", pa.string()),
-        pa.field("quantity", pa.int32()),
-        pa.field("unit_price", pa.float64()),
-        pa.field("total_amount", pa.float64()),
-        pa.field("status", pa.string()),
-        pa.field("region", pa.string()),
-        pa.field("event_type", pa.string()),
-        pa.field("event_timestamp", pa.string()),
-        # Consumer-added metadata (for audit & debugging)
-        pa.field("kafka_topic", pa.string()),
-        pa.field("kafka_partition", pa.int32()),
-        pa.field("kafka_offset", pa.int64()),
-        pa.field("ingested_at", pa.timestamp("us", tz="UTC")),
-    ])
+
 
     def __init__(
         self,
