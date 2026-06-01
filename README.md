@@ -28,54 +28,6 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 > Every single AWS resource is provisioned with **Terraform**. Nothing was clicked in the console.
 
 ---
-## 🏗️ Architecture
-![Alternative text describing](architecture.png)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    DATA SOURCES (8 Sources)                      │
-│   REST APIs │ PostgreSQL RDS │ File Drops │ Event Streams        │
-└──────────────────────┬──────────────────────────────────────────┘
-                       │
-         ┌─────────────┴──────────────┐
-         │                            │
-┌────────▼────────┐          ┌────────▼────────┐
-│  Apache Kafka   │          │   AWS Glue       │
-│  (MSK)          │          │   Crawlers       │
-│  Real-time      │          │   Batch Ingest   │
-└────────┬────────┘          └────────┬────────┘
-         └─────────────┬──────────────┘
-                       │
-┌──────────────────────▼──────────────────────────┐
-│              Amazon S3 Data Lake                 │
-│   ┌─────────┐    ┌──────────┐    ┌───────────┐  │
-│   │  RAW    │ →  │ CURATED  │ →  │CONSUMPTION│  │
-│   │ Landing │    │ Cleaned  │    │Aggregated │  │
-│   └─────────┘    └──────────┘    └───────────┘  │
-└──────────────────────┬──────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────┐
-│           AWS Glue PySpark Jobs                  │
-│   Schema validation · Dedup · Type casting       │
-└──────────────────────┬──────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────┐
-│              Amazon Redshift                     │
-│   dbt: Star Schema · SCD Type 2 · Window Funcs  │
-└──────────────────────┬──────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────┐
-│         Analytics · Athena · BI Tools            │
-└─────────────────────────────────────────────────┘
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-INFRASTRUCTURE LAYER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Terraform · Airflow · Lambda · IAM + KMS
-GitHub Actions · Docker + K8s · Great Expectations
-```
-
----
 
 ## ⚡ Challenges & Solutions
 
