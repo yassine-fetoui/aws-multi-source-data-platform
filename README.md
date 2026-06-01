@@ -1,4 +1,4 @@
-# 🚀 AWS Multi-Source Data Platform
+#  AWS Multi-Source Data Platform
 
 <div align="center">
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 📌 Overview
+##  Overview
 
 This project demonstrates a **real-world, end-to-end data platform** built entirely on AWS. It solves the core enterprise data engineering problem: consolidating data from multiple heterogeneous sources — REST APIs, relational databases, file drops, and real-time event streams — into a single reliable, cost-efficient, and analytically trustworthy platform.
 
@@ -29,13 +29,13 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-## ⚡ Challenges & Solutions
+##  Challenges & Solutions
 
 > *The architecture is the easy part. Making it reliable, cost-efficient, and secure under real production conditions is what this project is actually about.*
 
 ---
 
-### 🔴 Challenge 1 — Kafka Consumer Lag Spiking to 2M Messages
+###  Challenge 1 — Kafka Consumer Lag Spiking to 2M Messages
 
 **Symptom:** During peak hours, Kafka consumer lag spiked to 2 million messages. Data was arriving in Redshift hours late, and business teams were making decisions on stale information.
 
@@ -47,7 +47,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-### 🟠 Challenge 2 — S3 Small File Explosion Crashing Glue Jobs
+### Challenge 2 — S3 Small File Explosion Crashing Glue Jobs
 
 **Symptom:** Kafka streaming was landing ~500,000 tiny Parquet files into S3 daily. Glue jobs were spending 85% of their runtime on file listing and open overhead rather than actual computation. Jobs that should finish in 7 minutes were taking 45 minutes and occasionally timing out.
 
@@ -59,7 +59,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-### 🟡 Challenge 3 — RDS PostgreSQL CPU at 95% During Peak Hours
+###  Challenge 3 — RDS PostgreSQL CPU at 95% During Peak Hours
 
 **Symptom:** Amazon RDS PostgreSQL was serving both OLTP application writes and analytical reads simultaneously. During peak hours, analytical queries pushed CPU to 95%, causing timeouts on the application's transactional operations — directly impacting end users.
 
@@ -71,7 +71,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-### 🔵 Challenge 4 — Zero-Trust Security Without Credentials in Code
+###  Challenge 4 — Zero-Trust Security Without Credentials in Code
 
 **Symptom:** Initial implementation had AWS credentials hardcoded in Glue scripts and Lambda environment variables. A security review flagged this as a critical vulnerability — any code exposure would grant full platform access.
 
@@ -83,7 +83,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-### 🟣 Challenge 5 — 80+ Brittle SQL Scripts Breaking on Schema Changes
+###  Challenge 5 — 80+ Brittle SQL Scripts Breaking on Schema Changes
 
 **Symptom:** Eighty-plus ad-hoc SQL scripts maintained by different engineers with no consistency, no tests, and no documentation. Any schema change in a source table would silently break multiple downstream queries. Report correctness could not be trusted, and debugging took hours.
 
@@ -95,7 +95,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-## 📊 Results
+##  Results
 
 | Metric | Before | After | Improvement |
 |--------|--------|-------|-------------|
@@ -112,7 +112,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 | Category | Tools |
 |----------|-------|
@@ -129,7 +129,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 
-## 📁 Repository Structure
+##  Repository Structure
 
 ```
 aws-multi-source-data-platform/
@@ -188,7 +188,7 @@ aws-multi-source-data-platform/
 
 ---
 
-## 🚀 Setup & Deployment
+##  Setup & Deployment
 
 ### Prerequisites
 - AWS account with appropriate IAM permissions
@@ -237,7 +237,7 @@ dbt docs generate && dbt docs serve
 
 ---
 
-## 🔁 CI/CD Pipeline
+##  CI/CD Pipeline
 
 Every pull request triggers the following automated checks:
 
@@ -252,7 +252,7 @@ On merge to `main`, the pipeline runs `terraform apply` against the dev environm
 
 ---
 
-## 👤 Author
+##  Author
 
 **Yassine Fetoui** —  Data Engineer
 
