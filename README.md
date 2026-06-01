@@ -29,7 +29,7 @@ The platform follows a **medallion architecture** (Raw → Curated → Consumpti
 
 ---
 ##  Architecture 
-[Alternative text describing](architecture.png)
+![Alternative text describing](architecture.png)
 ##  Challenges & Solutions
 
 > *The architecture is the easy part. Making it reliable, cost-efficient, and secure under real production conditions is what this project is actually about.*
