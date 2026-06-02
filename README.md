@@ -1,23 +1,6 @@
 #  AWS Multi-Source Data Platform
 
-<div align="center">
 
-![AWS](https://img.shields.io/badge/AWS-%23FF9900.svg?style=for-the-badge&logo=amazon-aws&logoColor=white)
-![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-000?style=for-the-badge&logo=apachekafka)
-![Apache Spark](https://img.shields.io/badge/Apache%20Spark-FDEE21?style=for-the-badge&logo=apachespark&logoColor=black)
-![dbt](https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white)
-![Terraform](https://img.shields.io/badge/Terraform-%235835CC.svg?style=for-the-badge&logo=terraform&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-%23326ce5.svg?style=for-the-badge&logo=kubernetes&logoColor=white)
-![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-%232671E5.svg?style=for-the-badge&logo=githubactions&logoColor=white)
-
-**A production-grade, cloud-native data platform on AWS ingesting data from 8 heterogeneous sources, processing 20TB+ monthly, and delivering analytics-ready datasets to Amazon Redshift.**
-
-[Architecture](#-architecture) • [Challenges](#-challenges--solutions) • [Tech Stack](#-tech-stack) • [Results](#-results) • [Setup](#-setup--deployment)
-
-</div>
-
----
 
 ##  Overview
 
